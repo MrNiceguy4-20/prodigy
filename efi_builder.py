@@ -257,44 +257,43 @@ class EFIBuilder:
     # ------------------------------------------------------------------ #
 
     def prepare_tools(self) -> Dict[str, Path]:
-    print("  - Preparing tools (acpidump, macserial, gfxutil, ocvalidate)...")
-    tools: Dict[str, Path] = {}
+        print("  - Preparing tools (acpidump, macserial, gfxutil, ocvalidate)...")
+        tools: Dict[str, Path] = {}
 
-    # Tools are now inside the main OpenCore RELEASE.zip under Utilities/
-    zip_path = self._download_release_asset(
-        "acidanthera/OpenCorePkg",
-        "RELEASE.zip",
-        self.tools_cache_dir,
-    )
+        # Tools are now inside the main OpenCore RELEASE.zip under Utilities/
+        zip_path = self._download_release_asset(
+            "acidanthera/OpenCorePkg",
+            "RELEASE.zip",
+            self.tools_cache_dir,
+        )
 
-    extract_dir = self.tools_cache_dir / zip_path.stem
-    if not extract_dir.exists():
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(extract_dir)
+        extract_dir = self.tools_cache_dir / zip_path.stem
+        if not extract_dir.exists():
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                zf.extractall(extract_dir)
 
-    # Tools we want to extract
-    wanted = [
-        "acpidump.exe",
-        "ocvalidate.exe",
-        "macserial.exe",
-        "gfxutil.exe",
-    ]
+        # Tools we want to extract
+        wanted = [
+            "acpidump.exe",
+            "ocvalidate.exe",
+            "macserial.exe",
+            "gfxutil.exe",
+        ]
 
-    for name in wanted:
-        found = None
-        for p in extract_dir.rglob(name):
-            if p.is_file():
-                found = p
-                break
+        for name in wanted:
+            found = None
+            for p in extract_dir.rglob(name):
+                if p.is_file():
+                    found = p
+                    break
 
-        if found:
-            tools[name] = found
-            print(f"    - {name} ready")
-        else:
-            print(f"    ! {name} not found in OpenCore Utilities")
+            if found:
+                tools[name] = found
+                print(f"    - {name} ready")
+            else:
+                print(f"    ! {name} not found in OpenCore Utilities")
 
-    return tools
-
+        return tools
 
     # ------------------------------------------------------------------ #
     # ACPI dump + SSDT generation
@@ -961,5 +960,4 @@ class EFIBuilder:
 
         print("\nEFI build complete.")
         print(f"EFI folder created at:\n  {efi_dir}\n")
-
         return efi_dir
