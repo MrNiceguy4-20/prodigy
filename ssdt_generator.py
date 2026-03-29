@@ -13,25 +13,26 @@ class SSDTGenerator:
       - Ensure iasl is available
       - Decompile ACPI tables (DSDT + SSDTs) to DSL
       - Parse DSDT.dsl into a structured representation
-      - Generate dynamic SSDTs (EC, PLUG, USBX, PNLF, AWAC, HPET, SBUS, XOSI, IMEI, RTC0, etc.)
+      - Generate dynamic SSDTs (EC, PLUG, USBX, PNLF, AWAC, HPET, SBUS, XOSI,
+        IMEI, RTC0, ALS0, GPRW, USB-Reset)
       - Compile DSL → AML and write into EFI/OC/ACPI
     """
 
     def __init__(self, acpi_dump_dir: Path) -> None:
         self.acpi_dump_dir = Path(acpi_dump_dir).resolve()
         self.iasl_path = self._ensure_iasl()
-
         self.dsl_cache: Dict[str, str] = {}
         self.devices: Dict[str, List[Tuple[str, str]]] = {}
         self.cpu_scope: Optional[str] = None
         self.has_awac: bool = False
         self.has_rtc: bool = False
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Public API
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def generate_all(self, out_dir: Path) -> None:
+        """Decompile ACPI and generate all supported SSDTs into out_dir."""
         out_dir = Path(out_dir).resolve()
         out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -53,25 +54,22 @@ class SSDTGenerator:
         self._gen_ssdt_gprw(out_dir)
         self._gen_ssdt_usb_reset(out_dir)
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # iasl handling
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _ensure_iasl(self) -> str:
-        # Try PATH first
+        """Ensure iasl is available, either in PATH or in a local tools directory."""
         if self._cmd_exists("iasl"):
             return "iasl"
 
-        # Fallback: local tools directory
         tools_dir = self.acpi_dump_dir / "tools"
         tools_dir.mkdir(parents=True, exist_ok=True)
         iasl_exe = tools_dir / ("iasl.exe" if os.name == "nt" else "iasl")
-
         if iasl_exe.exists():
             return str(iasl_exe)
 
         # Minimal embedded iasl download stub (user can replace with real URL if desired)
-        # For now, we just require iasl to be present or installed manually.
         raise RuntimeError(
             "iasl not found. Please install iasl and ensure it is in PATH, "
             "or place it in ACPI dump 'tools' directory."
@@ -82,9 +80,9 @@ class SSDTGenerator:
 
         return which(cmd) is not None
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Decompilation
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _decompile_all(self) -> None:
         aml_files = list(self.acpi_dump_dir.glob("*.aml"))
@@ -94,9 +92,9 @@ class SSDTGenerator:
         cmd = [self.iasl_path, "-da", "-dl"] + [str(f.name) for f in aml_files]
         subprocess.run(cmd, cwd=self.acpi_dump_dir, check=True)
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # DSDT parsing (AST-like structure)
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _parse_dsdt(self) -> None:
         dsdt_dsl = self.acpi_dump_dir / "DSDT.dsl"
@@ -105,7 +103,6 @@ class SSDTGenerator:
 
         text = dsdt_dsl.read_text(encoding="utf-8", errors="ignore")
         self.dsl_cache["DSDT"] = text
-
         self._parse_devices(text)
         self._detect_cpu_scope(text)
         self._detect_timers(text)
@@ -113,13 +110,14 @@ class SSDTGenerator:
     def _parse_devices(self, text: str) -> None:
         """
         Very lightweight structural parser:
+
           - Finds Device (XXXX) blocks
           - Tracks their full ACPI path based on Scope nesting
         """
         scope_stack: List[str] = ["\\"]  # root
         lines = text.splitlines()
-
         current_path = "\\"
+
         for line in lines:
             line_stripped = line.strip()
 
@@ -134,7 +132,7 @@ class SSDTGenerator:
             if line_stripped.startswith("}"):
                 if len(scope_stack) > 1:
                     scope_stack.pop()
-                    current_path = ".".join(scope_stack)
+                current_path = ".".join(scope_stack)
                 continue
 
             # Device
@@ -161,15 +159,15 @@ class SSDTGenerator:
         if "Device (RTC" in text or "OperationRegion (RTC" in text:
             self.has_rtc = True
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Helpers
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _write_and_compile(self, out_dir: Path, name: str, dsl: str) -> None:
         dsl_path = out_dir / f"{name}.dsl"
         aml_path = out_dir / f"{name}.aml"
-
         dsl_path.write_text(dsl, encoding="utf-8")
+
         cmd = [self.iasl_path, dsl_path.name]
         subprocess.run(cmd, cwd=out_dir, check=True)
 
@@ -183,9 +181,9 @@ class SSDTGenerator:
                 return self.devices[c][0][1]
         return None
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # SSDT-EC
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _gen_ssdt_ec(self, out_dir: Path) -> None:
         ec_path = self._find_device_path(["EC", "EC0", "H_EC", "ECDV"])
@@ -209,13 +207,17 @@ DefinitionBlock ("", "SSDT", 2, "OCPROJ", "EC", 0x00000000)
 """
         self._write_and_compile(out_dir, "SSDT-EC", dsl)
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # SSDT-PLUG
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _gen_ssdt_plug(self, out_dir: Path) -> None:
         cpu_scope = self.cpu_scope or "\\_PR"
-        cpu0_path = f"{cpu_scope}.CPU0" if "CPU0" in (self.devices.keys()) else f"{cpu_scope}.PR00"
+        cpu0_path = (
+            f"{cpu_scope}.CPU0"
+            if "CPU0" in self.devices.keys()
+            else f"{cpu_scope}.PR00"
+        )
 
         dsl = f"""
 DefinitionBlock ("", "SSDT", 2, "OCPROJ", "PLUG", 0x00000000)
@@ -239,9 +241,9 @@ DefinitionBlock ("", "SSDT", 2, "OCPROJ", "PLUG", 0x00000000)
 """
         self._write_and_compile(out_dir, "SSDT-PLUG", dsl)
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # SSDT-USBX
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _gen_ssdt_usbx(self, out_dir: Path) -> None:
         dsl = r"""
@@ -270,9 +272,9 @@ DefinitionBlock ("", "SSDT", 2, "OCPROJ", "USBX", 0x00000000)
 """
         self._write_and_compile(out_dir, "SSDT-USBX", dsl)
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # SSDT-PNLF
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _gen_ssdt_pnlf(self, out_dir: Path) -> None:
         igpu_path = self._find_device_path(["IGPU", "GFX0", "VID", "GPU0"]) or "\\_SB.PCI0.IGPU"
@@ -288,6 +290,7 @@ DefinitionBlock ("", "SSDT", 2, "OCPROJ", "PNLF", 0x00000000)
         Name (_CID, "APP0002")
         Name (_UID, 0x0A)
         Name (_STA, 0x0B)
+
         Method (_DSM, 4, NotSerialized)
         {{
             If (!Arg2)
@@ -305,15 +308,12 @@ DefinitionBlock ("", "SSDT", 2, "OCPROJ", "PNLF", 0x00000000)
 """
         self._write_and_compile(out_dir, "SSDT-PNLF", dsl)
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # SSDT-AWAC
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _gen_ssdt_awac(self, out_dir: Path) -> None:
-        if not self.has_awac:
-            # Still generate as requested, but generic
-            pass
-
+        # Even if AWAC is not present, we generate a generic override
         dsl = r"""
 DefinitionBlock ("", "SSDT", 2, "OCPROJ", "AWAC", 0x00000000)
 {
@@ -331,9 +331,9 @@ DefinitionBlock ("", "SSDT", 2, "OCPROJ", "AWAC", 0x00000000)
 """
         self._write_and_compile(out_dir, "SSDT-AWAC", dsl)
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # SSDT-HPET
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _gen_ssdt_hpet(self, out_dir: Path) -> None:
         hpet_path = self._find_device_path(["HPET"]) or "\\_SB.PCI0.LPCB.HPET"
@@ -354,9 +354,9 @@ DefinitionBlock ("", "SSDT", 2, "OCPROJ", "HPET", 0x00000000)
 """
         self._write_and_compile(out_dir, "SSDT-HPET", dsl)
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # SSDT-SBUS
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _gen_ssdt_sbus(self, out_dir: Path) -> None:
         sbus_path = self._find_device_path(["SBUS", "SMBS"]) or "\\_SB.PCI0.SBUS"
@@ -377,9 +377,9 @@ DefinitionBlock ("", "SSDT", 2, "OCPROJ", "SBUS", 0x00000000)
 """
         self._write_and_compile(out_dir, "SSDT-SBUS", dsl)
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # SSDT-XOSI
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _gen_ssdt_xosi(self, out_dir: Path) -> None:
         dsl = r"""
@@ -391,19 +391,21 @@ DefinitionBlock ("", "SSDT", 2, "OCPROJ", "XOSI", 0x00000000)
         {
             Return (One)
         }
+
         If (Arg0 == "Darwin")
         {
             Return (One)
         }
+
         Return (Zero)
     }
 }
 """
         self._write_and_compile(out_dir, "SSDT-XOSI", dsl)
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # SSDT-IMEI
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _gen_ssdt_imei(self, out_dir: Path) -> None:
         imei_path = self._find_device_path(["IMEI", "HECI"]) or "\\_SB.PCI0.IMEI"
@@ -424,9 +426,9 @@ DefinitionBlock ("", "SSDT", 2, "OCPROJ", "IMEI", 0x00000000)
 """
         self._write_and_compile(out_dir, "SSDT-IMEI", dsl)
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # SSDT-RTC0
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _gen_ssdt_rtc0(self, out_dir: Path) -> None:
         dsl = r"""
@@ -440,9 +442,9 @@ DefinitionBlock ("", "SSDT", 2, "OCPROJ", "RTC0", 0x00000000)
 """
         self._write_and_compile(out_dir, "SSDT-RTC0", dsl)
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # SSDT-ALS0
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _gen_ssdt_als0(self, out_dir: Path) -> None:
         dsl = r"""
@@ -458,9 +460,9 @@ DefinitionBlock ("", "SSDT", 2, "OCPROJ", "ALS0", 0x00000000)
 """
         self._write_and_compile(out_dir, "SSDT-ALS0", dsl)
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # SSDT-GPRW
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _gen_ssdt_gprw(self, out_dir: Path) -> None:
         dsl = r"""
@@ -478,9 +480,9 @@ DefinitionBlock ("", "SSDT", 2, "OCPROJ", "GPRW", 0x00000000)
 """
         self._write_and_compile(out_dir, "SSDT-GPRW", dsl)
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # SSDT-USB-Reset
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _gen_ssdt_usb_reset(self, out_dir: Path) -> None:
         dsl = r"""

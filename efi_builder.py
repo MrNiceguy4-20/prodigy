@@ -1,7 +1,6 @@
 import ctypes
 import json
 import os
-import platform
 import shutil
 import subprocess
 import sys
@@ -14,11 +13,11 @@ from urllib.request import urlopen, Request
 
 from ssdt_generator import SSDTGenerator  # full ACPI-aware SSDT generator
 
-
 GITHUB_API = "https://api.github.com/repos"
 
 
 def is_admin() -> bool:
+    """Return True if the current process has administrative privileges (Windows)."""
     if os.name != "nt":
         return True
     try:
@@ -28,6 +27,7 @@ def is_admin() -> bool:
 
 
 def relaunch_as_admin() -> None:
+    """Relaunch the current script with elevation on Windows."""
     if os.name != "nt":
         return
     params = " ".join(f'"{a}"' for a in sys.argv)
@@ -45,13 +45,14 @@ def relaunch_as_admin() -> None:
 class EFIBuilder:
     """
     Automatic EFI builder with:
-    - OpenCore download (latest stable)
-    - Extended kext set (desktop + laptop)
-    - Drivers + tools
-    - ACPI dump via acpidump.exe
-    - Full SSDT generation via SSDTGenerator
-    - Full config.plist generation (OpenCore-style)
-    - Persistent cache under ./Cache
+
+      - OpenCore download (latest stable)
+      - Extended kext set (desktop + laptop)
+      - Drivers + tools
+      - ACPI dump via acpidump.exe
+      - Full SSDT generation via SSDTGenerator
+      - Full config.plist generation (OpenCore-style)
+      - Persistent cache under ./Cache
     """
 
     def __init__(self, base_dir: Optional[str] = None) -> None:
@@ -63,12 +64,11 @@ class EFIBuilder:
         self.kext_cache_dir = self.cache_dir / "Kexts"
         self.driver_cache_dir = self.cache_dir / "Drivers"
         self.tools_cache_dir = self.cache_dir / "Tools"
-
         self._ensure_dirs()
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Setup
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _ensure_dirs(self) -> None:
         for d in (
@@ -82,9 +82,9 @@ class EFIBuilder:
         ):
             d.mkdir(parents=True, exist_ok=True)
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # HTTP helpers
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _http_get_json(self, url: str) -> Any:
         req = Request(url, headers={"User-Agent": "OpenCoreProdigy/1.0"})
@@ -99,9 +99,9 @@ class EFIBuilder:
             shutil.copyfileobj(resp, f)
         return dest
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # GitHub release helpers
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _get_latest_release_asset(
         self,
@@ -124,19 +124,20 @@ class EFIBuilder:
     ) -> Path:
         asset = self._get_latest_release_asset(repo, asset_match)
         if not asset:
-            raise RuntimeError(f"Asset '{asset_match}' not found in {repo} latest release")
-
+            raise RuntimeError(
+                f"Asset '{asset_match}' not found in {repo} latest release"
+            )
         url = asset["browser_download_url"]
         name = asset["name"]
         dest = cache_dir / name
         return self._http_download(url, dest)
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # OpenCore
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def prepare_opencore(self) -> Path:
-        print("  - Downloading latest OpenCore release...")
+        print(" - Downloading latest OpenCore release...")
         zip_path = self._download_release_asset(
             "acidanthera/OpenCorePkg",
             "RELEASE.zip",
@@ -145,11 +146,11 @@ class EFIBuilder:
 
         extract_dir = self.oc_cache_dir / zip_path.stem
         if not extract_dir.exists():
-            print("  - Extracting OpenCore...")
+            print(" - Extracting OpenCore...")
             with zipfile.ZipFile(zip_path, "r") as zf:
                 zf.extractall(extract_dir)
 
-        oc_root = None
+        oc_root: Optional[Path] = None
         for p in extract_dir.rglob("OpenCore.efi"):
             oc_root = p.parent.parent
             break
@@ -157,45 +158,89 @@ class EFIBuilder:
         if not oc_root:
             raise RuntimeError("Could not locate OpenCore.efi in extracted archive")
 
-        print(f"  - OpenCore ready at: {oc_root}")
+        print(f" - OpenCore ready at: {oc_root}")
         return oc_root
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Kexts
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _kext_specs(self) -> Dict[str, Dict[str, str]]:
         return {
             "Lilu.kext": {"repo": "acidanthera/Lilu", "asset": "RELEASE.zip"},
-            "WhateverGreen.kext": {"repo": "acidanthera/WhateverGreen", "asset": "RELEASE.zip"},
-            "VirtualSMC.kext": {"repo": "acidanthera/VirtualSMC", "asset": "RELEASE.zip"},
-            "SMCProcessor.kext": {"repo": "acidanthera/VirtualSMC", "asset": "RELEASE.zip"},
-            "SMCSuperIO.kext": {"repo": "acidanthera/VirtualSMC", "asset": "RELEASE.zip"},
+            "WhateverGreen.kext": {
+                "repo": "acidanthera/WhateverGreen",
+                "asset": "RELEASE.zip",
+            },
+            "VirtualSMC.kext": {
+                "repo": "acidanthera/VirtualSMC",
+                "asset": "RELEASE.zip",
+            },
+            "SMCProcessor.kext": {
+                "repo": "acidanthera/VirtualSMC",
+                "asset": "RELEASE.zip",
+            },
+            "SMCSuperIO.kext": {
+                "repo": "acidanthera/VirtualSMC",
+                "asset": "RELEASE.zip",
+            },
             "AppleALC.kext": {"repo": "acidanthera/AppleALC", "asset": "RELEASE.zip"},
             "NVMeFix.kext": {"repo": "acidanthera/NVMeFix", "asset": "RELEASE.zip"},
-            "RestrictEvents.kext": {"repo": "acidanthera/RestrictEvents", "asset": "RELEASE.zip"},
-            "CPUFriend.kext": {"repo": "acidanthera/CPUFriend", "asset": "RELEASE.zip"},
-            "AirportItlwm.kext": {"repo": "OpenIntelWireless/itlwm", "asset": "AirportItlwm"},
-            "IntelBluetoothFirmware.kext": {"repo": "OpenIntelWireless/IntelBluetoothFirmware", "asset": "IntelBluetoothFirmware"},
-            "RealtekRTL8111.kext": {"repo": "Mieze/RTL8111_driver_for_OS_X", "asset": "zip"},
-            "LucyRTL8125Ethernet.kext": {"repo": "Mieze/LucyRTL8125Ethernet", "asset": "zip"},
-            "AtherosE2200Ethernet.kext": {"repo": "Mieze/AtherosE2200Ethernet", "asset": "zip"},
-            "USBToolBox.kext": {"repo": "USBToolBox/kext", "asset": "RELEASE.zip"},
+            "RestrictEvents.kext": {
+                "repo": "acidanthera/RestrictEvents",
+                "asset": "RELEASE.zip",
+            },
+            "CPUFriend.kext": {
+                "repo": "acidanthera/CPUFriend",
+                "asset": "RELEASE.zip",
+            },
+            "AirportItlwm.kext": {
+                "repo": "OpenIntelWireless/itlwm",
+                "asset": "AirportItlwm",
+            },
+            "IntelBluetoothFirmware.kext": {
+                "repo": "OpenIntelWireless/IntelBluetoothFirmware",
+                "asset": "IntelBluetoothFirmware",
+            },
+            "RealtekRTL8111.kext": {
+                "repo": "Mieze/RTL8111_driver_for_OS_X",
+                "asset": "zip",
+            },
+            "LucyRTL8125Ethernet.kext": {
+                "repo": "Mieze/LucyRTL8125Ethernet",
+                "asset": "zip",
+            },
+            "AtherosE2200Ethernet.kext": {
+                "repo": "Mieze/AtherosE2200Ethernet",
+                "asset": "zip",
+            },
+            "USBToolBox.kext": {
+                "repo": "USBToolBox/kext",
+                "asset": "RELEASE.zip",
+            },
             "UTBMap.kext": {"repo": "USBToolBox/kext", "asset": "RELEASE.zip"},
-            "VoodooPS2Controller.kext": {"repo": "acidanthera/VoodooPS2", "asset": "RELEASE.zip"},
-            "VoodooI2C.kext": {"repo": "VoodooI2C/VoodooI2C", "asset": "zip"},
-            "VoodooHDA.kext": {"repo": "VoodooHDA/VoodooHDA", "asset": "pkg"},
+            "VoodooPS2Controller.kext": {
+                "repo": "acidanthera/VoodooPS2",
+                "asset": "RELEASE.zip",
+            },
+            "VoodooI2C.kext": {
+                "repo": "VoodooI2C/VoodooI2C",
+                "asset": "zip",
+            },
+            "VoodooHDA.kext": {
+                "repo": "VoodooHDA/VoodooHDA",
+                "asset": "pkg",
+            },
         }
 
     def prepare_kexts(self) -> Dict[str, Path]:
-        print("  - Preparing kexts (extended universal set)...")
+        print(" - Preparing kexts (extended universal set)...")
         kext_paths: Dict[str, Path] = {}
         specs = self._kext_specs()
 
         for kext_name, spec in specs.items():
             repo = spec["repo"]
             asset_match = spec["asset"]
-
             try:
                 zip_path = self._download_release_asset(
                     repo,
@@ -203,7 +248,7 @@ class EFIBuilder:
                     self.kext_cache_dir,
                 )
             except Exception as e:
-                print(f"    ! Failed to download {kext_name} from {repo}: {e}")
+                print(f" ! Failed to download {kext_name} from {repo}: {e}")
                 continue
 
             extract_dir = self.kext_cache_dir / f"{zip_path.stem}_{kext_name}"
@@ -212,9 +257,11 @@ class EFIBuilder:
                     with zipfile.ZipFile(zip_path, "r") as zf:
                         zf.extractall(extract_dir)
                 except zipfile.BadZipFile:
+                    # Non‑zip assets (e.g., .pkg) are skipped for now
+                    print(f" ! {zip_path.name} is not a zip archive; skipping {kext_name}")
                     continue
 
-            found = None
+            found: Optional[Path] = None
             for p in extract_dir.rglob(kext_name):
                 if p.is_dir() and p.suffix == ".kext":
                     found = p
@@ -222,82 +269,75 @@ class EFIBuilder:
 
             if found:
                 kext_paths[kext_name] = found
-                print(f"    - {kext_name} ready")
+                print(f" - {kext_name} ready")
             else:
-                print(f"    ! {kext_name} not found in extracted archive")
+                print(f" ! {kext_name} not found in extracted archive")
 
         return kext_paths
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Drivers
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def prepare_drivers(self, oc_root: Path) -> Dict[str, Path]:
-        print("  - Preparing drivers...")
+        print(" - Preparing drivers...")
         drivers_dir = oc_root / "Drivers"
         driver_paths: Dict[str, Path] = {}
-
         wanted = [
             "OpenRuntime.efi",
             "OpenCanopy.efi",
             "OpenHfsPlus.efi",
             "HfsPlus.efi",
         ]
-
         for w in wanted:
             for p in drivers_dir.rglob(w):
                 driver_paths[w] = p
-                print(f"    - {w} ready")
+                print(f" - {w} ready")
                 break
-
         return driver_paths
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Tools (including acpidump, macserial, etc.)
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def prepare_tools(self) -> Dict[str, Path]:
-        print("  - Preparing tools (acpidump, macserial, gfxutil, ocvalidate)...")
+        print(" - Preparing tools (acpidump, macserial, gfxutil, ocvalidate)...")
         tools: Dict[str, Path] = {}
 
-        # Tools are now inside the main OpenCore RELEASE.zip under Utilities/
+        # Tools are inside the main OpenCore RELEASE.zip under Utilities/
         zip_path = self._download_release_asset(
             "acidanthera/OpenCorePkg",
             "RELEASE.zip",
             self.tools_cache_dir,
         )
-
         extract_dir = self.tools_cache_dir / zip_path.stem
         if not extract_dir.exists():
             with zipfile.ZipFile(zip_path, "r") as zf:
                 zf.extractall(extract_dir)
 
-        # Tools we want to extract
         wanted = [
             "acpidump.exe",
             "ocvalidate.exe",
             "macserial.exe",
             "gfxutil.exe",
         ]
-
         for name in wanted:
-            found = None
+            found: Optional[Path] = None
             for p in extract_dir.rglob(name):
                 if p.is_file():
                     found = p
                     break
-
             if found:
                 tools[name] = found
-                print(f"    - {name} ready")
+                print(f" - {name} ready")
             else:
-                print(f"    ! {name} not found in OpenCore Utilities")
+                print(f" ! {name} not found in OpenCore Utilities")
 
         return tools
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # ACPI dump + SSDT generation
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def dump_acpi(self, acpidump_path: Path) -> Path:
         if not is_admin():
@@ -307,9 +347,8 @@ class EFIBuilder:
             relaunch_as_admin()
 
         self.acpi_dir.mkdir(parents=True, exist_ok=True)
+        print(" - Dumping ACPI tables with acpidump.exe...")
 
-        print("  - Dumping ACPI tables with acpidump.exe...")
-        # Dump all tables (-b -z) so SSDTGenerator can see everything
         cmd = [str(acpidump_path), "-b", "-z"]
         try:
             subprocess.run(
@@ -320,38 +359,42 @@ class EFIBuilder:
                 stderr=subprocess.DEVNULL,
             )
         except subprocess.CalledProcessError:
-            print("    ! acpidump.exe failed, continuing with whatever ACPI data is available")
+            print(" ! acpidump.exe failed, continuing with whatever ACPI data is available")
 
-        # acpidump -b -z produces multiple .dat and acpi.bin; we just return the directory
-        print(f"  - ACPI dump directory: {self.acpi_dir}")
+        print(f" - ACPI dump directory: {self.acpi_dir}")
         return self.acpi_dir
 
     def generate_ssdts(self, acpi_dump_dir: Path, acpi_out_dir: Path) -> None:
-        print("  - Generating SSDTs via SSDTGenerator...")
+        print(" - Generating SSDTs via SSDTGenerator...")
         acpi_out_dir.mkdir(parents=True, exist_ok=True)
         try:
             gen = SSDTGenerator(acpi_dump_dir)
             gen.generate_all(acpi_out_dir)
-            print("    - SSDT generation complete")
+            print(" - SSDT generation complete")
         except Exception as e:
-            print(f"    ! SSDT generation failed: {e}")
+            print(f" ! SSDT generation failed: {e}")
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # macOS target selection + OCLP logic
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _prompt_macos_target(self, compatibility_report: Dict[str, Any]) -> str:
-        recommended = compatibility_report.get("RecommendedVersion", "Unknown")
+        recommended = compatibility_report.get("recommended", "Unknown")
+
         print("\n=== macOS Target Selection ===")
-        print(f"Recommended macOS (if available): {recommended}\n")
+        if recommended and recommended != "Unknown":
+            print(f"Recommended macOS (if available): {recommended}\n")
+        else:
+            print("No specific recommendation available.\n")
+
         print("Build EFI for which macOS?")
-        print("  [H] High Sierra")
-        print("  [M] Mojave")
-        print("  [C] Catalina")
-        print("  [B] Big Sur")
-        print("  [N] Monterey")
-        print("  [V] Ventura")
-        print("  [S] Sonoma")
+        print(" [H] High Sierra")
+        print(" [M] Mojave")
+        print(" [C] Catalina")
+        print(" [B] Big Sur")
+        print(" [N] Monterey")
+        print(" [V] Ventura")
+        print(" [S] Sonoma")
 
         mapping = {
             "h": "High Sierra",
@@ -367,11 +410,15 @@ class EFIBuilder:
             choice = input("\nEnter choice: ").strip().lower()
             if choice in mapping:
                 target = mapping[choice]
-                print(f"\n  - macOS target set to: {target}\n")
+                print(f"\n - macOS target set to: {target}\n")
                 return target
-            print("  ! Invalid choice, please try again.")
+            print(" ! Invalid choice, please try again.")
 
-    def _needs_ocl_patches(self, hardware_report: Dict[str, Any], macos_target: str) -> bool:
+    def _needs_ocl_patches(
+        self,
+        hardware_report: Dict[str, Any],
+        macos_target: str,
+    ) -> bool:
         # Very simple heuristic: Ventura/Sonoma + older Intel iGPU or NVIDIA
         if macos_target not in ("Ventura", "Sonoma"):
             return False
@@ -379,7 +426,6 @@ class EFIBuilder:
         gpus = hardware_report.get("GPU", {})
         gpu_names = " ".join(gpus.keys()).lower()
 
-        # Rough detection of problematic GPUs
         bad_markers = [
             "hd 3000",
             "hd 4000",
@@ -394,9 +440,13 @@ class EFIBuilder:
         if any(m in gpu_names for m in bad_markers):
             return True
 
-        # Very old CPUs with no clear GPU info
-        cpu_name = hardware_report.get("CPU", {}).get("Processor Name", "").lower()
-        if any(gen in cpu_name for gen in ("i3-2", "i5-2", "i7-2", "i3-3", "i5-3", "i7-3")):
+        cpu_name = (
+            hardware_report.get("CPU", {}).get("Processor Name", "") or ""
+        ).lower()
+        if any(
+            gen in cpu_name
+            for gen in ("i3-2", "i5-2", "i7-2", "i3-3", "i5-3", "i7-3")
+        ):
             return True
 
         return False
@@ -408,11 +458,11 @@ class EFIBuilder:
                 return True
             if ans in ("n", "no"):
                 return False
-            print("  ! Please answer y or n.")
+            print(" ! Please answer y or n.")
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # SMBIOS selection + serial generation
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _detect_cpu_generation(self, cpu_name: str) -> Optional[int]:
         # Very rough Intel gen detection from model number (e.g., i7-8700K -> 8th gen)
@@ -426,22 +476,25 @@ class EFIBuilder:
             first = int(num[0])
         except ValueError:
             return None
-        # 2xxx -> 2nd, 3xxx -> 3rd, ..., 9xxx -> 9th, 10xxx -> 10th, etc.
+
         if len(num) == 4:
             return first
         if len(num) == 5:
             return int(num[:2])
         return None
 
-    def _select_smbios_model(self, hardware_report: Dict[str, Any], macos_target: str) -> str:
+    def _select_smbios_model(
+        self,
+        hardware_report: Dict[str, Any],
+        macos_target: str,
+    ) -> str:
         form_factor = hardware_report.get("FormFactor", "Desktop")
-        cpu_name = hardware_report.get("CPU", {}).get("Processor Name", "")
+        cpu_name = hardware_report.get("CPU", {}).get("Processor Name", "") or ""
         gpus = hardware_report.get("GPU", {})
         gpu_names = " ".join(gpus.keys()).lower()
-
         cpu_gen = self._detect_cpu_generation(cpu_name.lower()) or 8
 
-        # AMD / unknown CPU: prefer MacPro1,1 / iMacPro1,1 style
+        # AMD / unknown CPU: prefer MacPro/iMacPro style
         if "ryzen" in cpu_name.lower() or "epyc" in cpu_name.lower():
             if "laptop" in form_factor.lower():
                 return "MacBookPro16,3"
@@ -454,11 +507,11 @@ class EFIBuilder:
                 return "MacBookPro11,1"
             if cpu_gen == 5:
                 return "MacBookPro12,1"
-            if cpu_gen == 6 or cpu_gen == 7:
+            if cpu_gen in (6, 7):
                 return "MacBookPro14,1"
             if cpu_gen == 8:
                 return "MacBookPro15,2"
-            if cpu_gen == 9 or cpu_gen == 10:
+            if cpu_gen in (9, 10):
                 return "MacBookPro16,1"
             if cpu_gen >= 11:
                 return "MacBookPro16,3"
@@ -468,7 +521,7 @@ class EFIBuilder:
                 return "iMac14,2"
             if cpu_gen == 5:
                 return "iMac15,1"
-            if cpu_gen == 6 or cpu_gen == 7:
+            if cpu_gen in (6, 7):
                 return "iMac17,1"
             if cpu_gen == 8:
                 return "iMac19,1"
@@ -480,19 +533,21 @@ class EFIBuilder:
                 # 11th+ gen: MacPro7,1 is safest
                 return "MacPro7,1"
 
-        # Fallback
         return "iMac19,1"
 
     def _run_macserial(self, macserial_path: Path, smbios: str) -> Dict[str, str]:
         # macserial -m iMac19,1 -n 1
         try:
             cmd = [str(macserial_path), "-m", smbios, "-n", "1"]
-            out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True)
+            out = subprocess.check_output(
+                cmd,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
         except Exception:
             return {}
 
         # Output format: Model | Serial | Board Serial | SmUUID
-        # Example: iMac19,1 | C02XXX | C027XXX | XXXXX-XXXX-...
         parts = out.strip().split("|")
         if len(parts) < 4:
             return {}
@@ -500,16 +555,15 @@ class EFIBuilder:
         serial = parts[1].strip()
         mlb = parts[2].strip()
         smuuid = parts[3].strip()
-
         return {
             "SystemSerialNumber": serial,
             "MLB": mlb,
             "SystemUUID": smuuid,
         }
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Boot-args + quirks
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _build_boot_args(
         self,
@@ -551,9 +605,9 @@ class EFIBuilder:
             return "Default"
         return "Disabled"
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Config.plist generation
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def write_config_plist(
         self,
@@ -570,7 +624,7 @@ class EFIBuilder:
         import plistlib
 
         config_path = efi_oc_dir / "config.plist"
-        print(f"  - Writing config.plist at: {config_path}")
+        print(f" - Writing config.plist at: {config_path}")
 
         # ACPI/Add: all .aml in ACPI dir
         acpi_add: List[Dict[str, Any]] = []
@@ -612,6 +666,7 @@ class EFIBuilder:
         macserial_path = tools.get("macserial.exe")
         if macserial_path:
             serials = self._run_macserial(macserial_path, smbios_model)
+
         if not serials:
             # Fallback: dummy values (user should replace)
             serials = {
@@ -852,9 +907,9 @@ class EFIBuilder:
         with open(config_path, "wb") as f:
             plistlib.dump(config, f)
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # EFI assembly
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def build_efi(
         self,
@@ -872,7 +927,7 @@ class EFIBuilder:
         resources_out_dir = oc_dir / "Resources"
 
         print("\n=== EFI Builder ===\n")
-        print(f"Target output directory:\n  {out_root}\n")
+        print(f"Target output directory:\n {out_root}\n")
 
         if efi_dir.exists():
             print("An EFI folder already exists in this location.")
@@ -880,10 +935,10 @@ class EFIBuilder:
             if ans != "y":
                 print("\nEFI build cancelled.\n")
                 return efi_dir
-            print("  - Removing existing EFI folder...")
+            print(" - Removing existing EFI folder...")
             shutil.rmtree(efi_dir)
 
-        print("  - Creating EFI folder structure...")
+        print(" - Creating EFI folder structure...")
         for d in (
             efi_dir,
             oc_dir,
@@ -902,9 +957,9 @@ class EFIBuilder:
         form_factor = hardware_report.get("FormFactor", "Unknown")
 
         print("Detected hardware:")
-        print(f"  CPU: {cpu_name}")
-        print(f"  GPU: {gpu_list}")
-        print(f"  Form Factor: {form_factor}\n")
+        print(f" CPU: {cpu_name}")
+        print(f" GPU: {gpu_list}")
+        print(f" Form Factor: {form_factor}\n")
 
         # macOS target selection
         macos_target = self._prompt_macos_target(compatibility_report)
@@ -928,7 +983,7 @@ class EFIBuilder:
             acpi_dump_dir = self.dump_acpi(acpidump_path)
             self.generate_ssdts(acpi_dump_dir, acpi_out_dir)
         else:
-            print("  ! acpidump.exe not available; skipping ACPI dump and SSDT generation")
+            print(" ! acpidump.exe not available; skipping ACPI dump and SSDT generation")
 
         # Kexts
         kexts = self.prepare_kexts()
@@ -942,7 +997,10 @@ class EFIBuilder:
         needs_ocl = self._needs_ocl_patches(hardware_report, macos_target)
         oclp_enabled = False
         if needs_ocl:
-            print("WARNING: Your hardware likely requires OCLP-style patches for this macOS target.")
+            print(
+                "WARNING: Your hardware likely requires OCLP-style patches "
+                "for this macOS target."
+            )
             oclp_enabled = self._prompt_enable_ocl_patches()
 
         # Config.plist
@@ -959,5 +1017,5 @@ class EFIBuilder:
         )
 
         print("\nEFI build complete.")
-        print(f"EFI folder created at:\n  {efi_dir}\n")
+        print(f"EFI folder created at:\n {efi_dir}\n")
         return efi_dir

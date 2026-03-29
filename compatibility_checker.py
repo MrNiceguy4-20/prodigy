@@ -5,6 +5,7 @@ from typing import Any, Dict, Tuple, Optional
 class CompatibilityChecker:
     """
     Hackintosh‑friendly macOS compatibility engine.
+
     Produces:
       - Native macOS range
       - OCLP macOS range
@@ -12,28 +13,29 @@ class CompatibilityChecker:
       - GPU acceleration warnings
     """
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Public API
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def check_compatibility(
-        self, hardware: Dict[str, Any]
+        self,
+        hardware: Dict[str, Any],
     ) -> Tuple[Dict[str, Any], Tuple[str, str], bool]:
         """
         Returns:
-          hardware (unchanged),
-          (min_native, max_native),
-          oclp_required (bool)
+            hardware (with 'Compatibility' section added),
+            (min_native, max_native),
+            oclp_required (bool)
         """
-
         cpu_info = hardware.get("CPU", {})
         gpu_info = hardware.get("GPU", {})
         form_factor = hardware.get("FormFactor", "Desktop")
 
         cpu_gen = self._detect_cpu_generation(cpu_info)
         cpu_vendor = self._detect_cpu_vendor(cpu_info)
-
-        gpu_family, gpu_limit, gpu_accel_warning = self._detect_gpu_family_and_limit(gpu_info)
+        gpu_family, gpu_limit, gpu_accel_warning = self._detect_gpu_family_and_limit(
+            gpu_info
+        )
 
         native_min, native_max = self._cpu_native_range(cpu_vendor, cpu_gen)
         patched_min, patched_max = self._cpu_patched_range(cpu_vendor, cpu_gen)
@@ -69,9 +71,9 @@ class CompatibilityChecker:
 
         return hardware, (native_min, native_max), oclp_required
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # CPU detection
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _detect_cpu_vendor(self, cpu: Dict[str, Any]) -> str:
         name = (cpu.get("Processor Name") or "").lower()
@@ -84,7 +86,9 @@ class CompatibilityChecker:
     def _detect_cpu_generation(self, cpu: Dict[str, Any]) -> Optional[int]:
         """
         Extract Intel CPU generation from model name.
-        Example: "Intel(R) Core(TM) i7-8700K" -> 8th gen
+
+        Example:
+            "Intel(R) Core(TM) i7-8700K" -> 8th gen
         """
         name = cpu.get("Processor Name", "")
         match = re.search(r"i[3579]-([0-9]{4,5})", name)
@@ -93,27 +97,27 @@ class CompatibilityChecker:
 
         model = int(match.group(1))
 
-        # 5-digit models (10th gen+): 10400, 11400, 12400, etc.
+        # 5‑digit models (10th gen+): 10400, 11400, 12400, etc.
         if model >= 10000:
             return int(str(model)[0:2])  # 10th, 11th, 12th, 13th, 14th gen
 
-        # 4-digit models: 2500, 3770, 4790, 6700, etc.
+        # 4‑digit models: 2500, 3770, 4790, 6700, etc.
         return int(str(model)[0])  # 2nd–9th gen
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # GPU detection
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _detect_gpu_family_and_limit(
-        self, gpus: Dict[str, Dict[str, Any]]
+        self,
+        gpus: Dict[str, Dict[str, Any]],
     ) -> Tuple[str, Optional[str], Optional[str]]:
         """
         Returns:
-          gpu_family (string),
-          gpu_limit (max macOS version),
-          gpu_accel_warning (string or None)
+            gpu_family (string),
+            gpu_limit (max macOS version),
+            gpu_accel_warning (string or None)
         """
-
         if not gpus:
             return "Unknown", None, None
 
@@ -131,13 +135,40 @@ class CompatibilityChecker:
 
         # NVIDIA
         if "gtx" in name or "rtx" in name or "quadro" in name:
-            if any(k in name for k in ["750", "950", "960", "970", "980", "1050", "1060", "1070", "1080"]):
+            if any(
+                k in name
+                for k in [
+                    "750",
+                    "950",
+                    "960",
+                    "970",
+                    "980",
+                    "1050",
+                    "1060",
+                    "1070",
+                    "1080",
+                ]
+            ):
                 return (
                     "NVIDIA Maxwell/Pascal",
                     "High Sierra",
                     "No hardware acceleration on macOS Mojave or newer.",
                 )
-            if any(k in name for k in ["640", "650", "660", "670", "680", "690", "710", "720", "730", "740"]):
+            if any(
+                k in name
+                for k in [
+                    "640",
+                    "650",
+                    "660",
+                    "670",
+                    "680",
+                    "690",
+                    "710",
+                    "720",
+                    "730",
+                    "740",
+                ]
+            ):
                 return "NVIDIA Kepler", "Monterey", None
 
         # AMD
@@ -155,14 +186,13 @@ class CompatibilityChecker:
 
         return "Unknown", None, None
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # CPU → macOS ranges
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _cpu_native_range(self, vendor: str, gen: Optional[int]) -> Tuple[str, str]:
         if vendor == "AMD":
             return "High Sierra", "Sonoma"
-
         if gen is None:
             return "High Sierra", "Sonoma"
 
@@ -178,21 +208,21 @@ class CompatibilityChecker:
             return "El Capitan", "Monterey"
         if gen == 7:
             return "Sierra", "Ventura"
-        if gen == 8 or gen == 9:
+        if gen in (8, 9):
             return "High Sierra", "Sonoma"
         if gen == 10:
             return "Mojave", "Sonoma"
         if gen == 11:
             return "Catalina", "Sonoma"
         if gen >= 12:
-            return "Monterey", "Monterey"  # Native support ends here
+            # Native support ends here
+            return "Monterey", "Monterey"
 
         return "High Sierra", "Sonoma"
 
     def _cpu_patched_range(self, vendor: str, gen: Optional[int]) -> Tuple[str, str]:
         if vendor == "AMD":
             return "High Sierra", "Sonoma"
-
         if gen is None:
             return "High Sierra", "Sonoma"
 
@@ -207,9 +237,9 @@ class CompatibilityChecker:
 
         return "High Sierra", "Sonoma"
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Helpers
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _min_version(self, v1: str, v2: Optional[str]) -> str:
         if v2 is None:
@@ -231,14 +261,20 @@ class CompatibilityChecker:
         ]
         return versions[min(versions.index(v1), versions.index(v2))]
 
-    def _needs_oclp(self, vendor: str, gen: Optional[int], native_max: str, patched_max: str) -> bool:
+    def _needs_oclp(
+        self,
+        vendor: str,
+        gen: Optional[int],
+        native_max: str,
+        patched_max: str,
+    ) -> bool:
         if vendor == "AMD":
             return True
         return native_max != patched_max
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Recommendation engine (Balanced Mode)
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _recommend_version(
         self,
@@ -255,7 +291,6 @@ class CompatibilityChecker:
           - If OCLP needed, recommend newest patched version *only if GPU supports it*
           - Avoid versions with broken acceleration
         """
-
         # If GPU acceleration breaks on newer macOS, recommend the last version with acceleration
         if gpu_accel_warning:
             return native_max

@@ -2,45 +2,62 @@ import os
 import platform
 import subprocess
 import sys
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
-def _ensure_wmi_installed() -> Any:
+def _ensure_wmi_installed() -> Optional[Any]:
+    """
+    Ensure the Python 'wmi' module is available on Windows.
+
+    Returns the imported module or None if installation/import fails.
+    """
     try:
         import wmi  # type: ignore
+
         return wmi
     except ImportError:
-        print("  - Python 'wmi' module not found. Installing with pip...")
+        print(" - Python 'wmi' module not found. Attempting installation with pip...")
         try:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "wmi"])
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", "wmi"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
         except subprocess.CalledProcessError:
-            print("    ! Failed to install 'wmi'. Hardware detection will be limited.")
+            print(" ! Failed to install 'wmi'. Hardware detection will be limited.")
             return None
+
         try:
             import wmi  # type: ignore
+
             return wmi
         except ImportError:
-            print("    ! Still cannot import 'wmi'.")
+            print(" ! Still cannot import 'wmi'.")
             return None
 
 
 class HardwareDetector:
-    def __init__(self) -> None:
-        self.is_windows = (os.name == "nt")
-        self.wmi = None
-        if self.is_windows:
-            self.wmi = _ensure_wmi_installed()
+    """
+    Collects hardware information, primarily on Windows via WMI.
 
-    # ------------------------------------------------------------------ #
+    On non‑Windows platforms or when WMI is unavailable, returns a minimal
+    fallback report with OS info and placeholders for other sections.
+    """
+
+    def __init__(self) -> None:
+        self.is_windows = os.name == "nt"
+        self.wmi = _ensure_wmi_installed() if self.is_windows else None
+
+    # ------------------------------------------------------------------
     # Public API
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def get_hardware_report(self) -> Dict[str, Any]:
+        """Return a structured hardware report."""
         if not self.is_windows or self.wmi is None:
             return self._fallback_report()
 
         c = self.wmi.WMI()
-
         cpu = self._get_cpu_info(c)
         gpus = self._get_gpu_info(c)
         board = self._get_motherboard_info(c)
@@ -48,7 +65,6 @@ class HardwareDetector:
         storage = self._get_storage_info(c)
         network = self._get_network_info(c)
         battery = self._get_battery_info(c)
-
         is_laptop = self._infer_laptop(battery, board)
 
         report: Dict[str, Any] = {
@@ -67,12 +83,11 @@ class HardwareDetector:
             "Battery": battery,
             "FormFactor": "Laptop" if is_laptop else "Desktop",
         }
-
         return report
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # CPU
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _get_cpu_info(self, c: Any) -> Dict[str, Any]:
         info: Dict[str, Any] = {}
@@ -91,12 +106,13 @@ class HardwareDetector:
                 "Architecture": getattr(p, "Architecture", None),
             }
         except Exception:
+            # Keep it silent but return whatever we have
             pass
         return info
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # GPU
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _get_gpu_info(self, c: Any) -> Dict[str, Dict[str, Any]]:
         gpus: Dict[str, Dict[str, Any]] = {}
@@ -115,9 +131,9 @@ class HardwareDetector:
             pass
         return gpus
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Motherboard
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _get_motherboard_info(self, c: Any) -> Dict[str, Any]:
         info: Dict[str, Any] = {}
@@ -128,6 +144,7 @@ class HardwareDetector:
                 info["Manufacturer"] = getattr(b, "Manufacturer", "").strip()
                 info["Product"] = getattr(b, "Product", "").strip()
                 info["SerialNumber"] = getattr(b, "SerialNumber", "").strip()
+
             comps = c.Win32_ComputerSystem()
             if comps:
                 cs = comps[0]
@@ -138,9 +155,9 @@ class HardwareDetector:
             pass
         return info
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # RAM
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _get_ram_info(self, c: Any) -> Dict[str, Any]:
         info: Dict[str, Any] = {"TotalMB": None, "Modules": []}
@@ -166,9 +183,9 @@ class HardwareDetector:
             pass
         return info
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Storage
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _get_storage_info(self, c: Any) -> List[Dict[str, Any]]:
         drives: List[Dict[str, Any]] = []
@@ -189,9 +206,9 @@ class HardwareDetector:
             pass
         return drives
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Network
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _get_network_info(self, c: Any) -> Dict[str, List[Dict[str, Any]]]:
         info: Dict[str, List[Dict[str, Any]]] = {"Ethernet": [], "WiFi": []}
@@ -201,20 +218,23 @@ class HardwareDetector:
                 name = getattr(a, "Name", "").strip()
                 pnp = getattr(a, "PNPDeviceID", "") or ""
                 net_enabled = getattr(a, "NetEnabled", False)
-
                 entry = {
                     "Name": name,
                     "Manufacturer": getattr(a, "Manufacturer", "").strip(),
                     "PNPDeviceID": pnp.strip(),
                     "NetEnabled": bool(net_enabled),
                 }
-
                 lname = name.lower()
                 lpnp = pnp.lower()
 
-                if "wireless" in lname or "wi-fi" in lname or "wifi" in lname or "wlan" in lname:
+                if (
+                    "wireless" in lname
+                    or "wi-fi" in lname
+                    or "wifi" in lname
+                    or "wlan" in lname
+                ):
                     info["WiFi"].append(entry)
-                elif "bluetooth" in lname:
+                elif "bluetooth" in lname or "bluetooth" in lpnp:
                     # ignore BT here; handled separately if needed
                     continue
                 else:
@@ -223,9 +243,9 @@ class HardwareDetector:
             pass
         return info
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Battery
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _get_battery_info(self, c: Any) -> Dict[str, Any]:
         info: Dict[str, Any] = {"Present": False, "Batteries": []}
@@ -238,16 +258,18 @@ class HardwareDetector:
                         {
                             "Name": getattr(b, "Name", "").strip(),
                             "Status": getattr(b, "BatteryStatus", None),
-                            "EstimatedChargeRemaining": getattr(b, "EstimatedChargeRemaining", None),
+                            "EstimatedChargeRemaining": getattr(
+                                b, "EstimatedChargeRemaining", None
+                            ),
                         }
                     )
         except Exception:
             pass
         return info
 
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
     # Laptop vs Desktop heuristic
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
 
     def _infer_laptop(self, battery: Dict[str, Any], board: Dict[str, Any]) -> bool:
         if battery.get("Present"):
@@ -258,11 +280,12 @@ class HardwareDetector:
             return True
         return False
 
-    # ------------------------------------------------------------------ #
-    # Fallback (non-Windows or no WMI)
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
+    # Fallback (non‑Windows or no WMI)
+    # ------------------------------------------------------------------
 
     def _fallback_report(self) -> Dict[str, Any]:
+        """Return a minimal report when full WMI‑based detection is not available."""
         return {
             "OS": {
                 "System": platform.system(),
